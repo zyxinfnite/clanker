@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WatchBuddy</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,Arial;background:#10131b;color:#f4f5fa}
+*{box-sizing:border-box}body{margin:0;padding:18px;max-width:1100px;margin:auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-size:28px}small,.muted{color:#aab2c5}
+.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px;margin-top:18px}
+.panel{background:#1b2130;border:1px solid #30394d;border-radius:16px;padding:14px}
+input,button{font:inherit;border-radius:10px;padding:11px;border:1px solid #46516a;background:#111725;color:#fff}
+button{cursor:pointer;background:#5267db;border:0;font-weight:650}button.secondary{background:#30394d}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}input{min-width:0;flex:1}
+#player{width:100%;aspect-ratio:16/9;background:#05070b;border-radius:12px;overflow:hidden}
+#player iframe{width:100%;height:100%;border:0}
+#messages{height:330px;overflow:auto;background:#111725;border-radius:10px;padding:10px;margin:10px 0}
+.msg{padding:6px 0;border-bottom:1px solid #283044;overflow-wrap:anywhere}.msg b{color:#aebcff}
+.status{font-size:13px;color:#9eabc5;margin-top:8px}
+@media(max-width:760px){.layout{grid-template-columns:1fr}body{padding:12px}#messages{height:220px}}
+</style></head>
+<body>
+<header><div><h1>🍿 WatchBuddy</h1><small>Watch together, chat together.</small></div><div class="muted" id="roomLabel"></div></header>
+<div class="panel" style="margin-top:16px">
+  <div class="controls"><input id="room" placeholder="Room name (e.g. movie-night)" value="movie-night"><button id="join">Join room</button><button class="secondary" id="copy">Copy invite</button></div>
+  <div class="controls"><input id="videoUrl" placeholder="Paste a YouTube link"><button id="load">Load video</button></div>
+  <div class="status" id="status">Connect to a room to begin.</div>
+</div>
+<div class="layout">
+  <section class="panel"><div id="player"></div><div class="controls"><button id="play">Play</button><button class="secondary" id="pause">Pause</button><button class="secondary" id="sync">Sync everyone</button></div><p class="muted">Playback sync is best-effort. Some videos may block embedding.</p></section>
+  <section class="panel"><h2 style="margin:0">Room chat</h2><div id="messages"></div><div class="controls"><input id="name" placeholder="Your name" value="Guest"><input id="chat" placeholder="Say something…"><button id="send">Send</button></div></section>
+</div>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const $=id=>document.getElementById(id); let ws, player, roomId="movie-night", applying=false, lastSync=0;
+function setStatus(t){$("status").textContent=t}
+function videoId(v){try{let u=new URL(v);if(u.hostname.includes("youtu.be"))return u.pathname.slice(1,12);if(u.hostname.includes("youtube.com"))return u.searchParams.get("v")}catch{}return /^[\w-]{11}$/.test(v)?v:""}
+function addMessage(e){let d=document.createElement("div");d.className="msg";let b=document.createElement("b");b.textContent=e.name+": ";let s=document.createElement("span");s.textContent=e.text;d.append(b,s);$("messages").append(d);$("messages").scrollTop=$("messages").scrollHeight}
+function connect(){roomId=$("room").value.trim()||"lobby";$("roomLabel").textContent="Room: "+roomId; if(ws)ws.close();ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");ws.onopen=()=>{ws.send(JSON.stringify({type:"join",roomId}));setStatus("Connected to "+roomId)};ws.onmessage=e=>{let m=JSON.parse(e.data);if(m.type==="state"){if(m.room.videoId)loadPlayer(m.room.videoId,m.room.time,m.room.playing)}if(m.type==="sync"&&player&&m.from!==undefined){applying=true;if(Math.abs(player.getCurrentTime()-m.time)>2)player.seekTo(m.time,true);if(m.playing)player.playVideo();else player.pauseVideo();setTimeout(()=>applying=false,700)}if(m.type==="chat")addMessage(m.entry);if(m.type==="notice")setStatus(m.text);if(m.type==="error")setStatus(m.text)}}
+function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify({...o,roomId}))}
+function loadPlayer(id,time=0,playing=false){if(!window.YT||!YT.Player){setTimeout(()=>loadPlayer(id,time,playing),500);return}if(player){player.loadVideoById({videoId:id,startSeconds:time});if(!playing)player.pauseVideo()}else player=new YT.Player("player",{videoId:id,playerVars:{playsinline:1},events:{onReady:()=>{if(!playing)player.pauseVideo()}}})}
+window.onYouTubeIframeAPIReady=()=>{};
+$("join").onclick=connect;$("load").onclick=()=>{let id=videoId($("videoUrl").value);if(!id)return setStatus("Paste a valid YouTube video link.");send({type:"video",video:id})};
+$("play").onclick=()=>{if(player){player.playVideo();send({type:"sync",time:player.getCurrentTime(),playing:true})}};
+$("pause").onclick=()=>{if(player){player.pauseVideo();send({type:"sync",time:player.getCurrentTime(),playing:false})}};
+$("sync").onclick=()=>{if(player)send({type:"sync",time:player.getCurrentTime(),playing:player.getPlayerState()===1})};
+$("send").onclick=()=>{let text=$("chat").value.trim();if(text){send({type:"chat",name:$("name").value||"Guest",text});$("chat").value=""}};
+$("chat").addEventListener("keydown",e=>{if(e.key==="Enter")$("send").click()});
+$("copy").onclick=async()=>{let u=new URL(location.href);u.searchParams.set("room",roomId);await navigator.clipboard.writeText(u.toString());setStatus("Invite link copied.")};
+const p=new URLSearchParams(location.search);if(p.get("room"))$("room").value=p.get("room");connect();
+setInterval(()=>{if(player&&ws&&ws.readyState===1&&!applying&&Date.now()-lastSync>5000){lastSync=Date.now();send({type:"sync",time:player.getCurrentTime(),playing:player.getPlayerState()===1})}},5000);
+</script></body></html>
