@@ -1,0 +1,113 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WatchBuddy</title>
+<style>
+body{margin:0;background:#101322;color:white;font-family:Arial,sans-serif;padding:20px}
+h1{color:#8b9cff}
+main{max-width:850px;margin:auto}
+input,button{padding:12px;border:0;border-radius:8px;margin:4px}
+input{background:#252b40;color:white}
+button{background:#6578ff;color:white;cursor:pointer}
+#player{width:100%;aspect-ratio:16/9;background:#000;margin-top:15px}
+#player iframe{width:100%;height:100%}
+#messages{height:180px;overflow:auto;background:#1b2033;padding:12px;border-radius:8px}
+#status{color:#9daaff}
+</style>
+</head>
+<body>
+<main>
+<h1>🍿 WatchBuddy</h1>
+<p>Watch YouTube together with friends!</p>
+<p id="status">Connecting...</p>
+
+<h3>Room</h3>
+<input id="room" value="lobby" placeholder="Room name">
+<button onclick="joinRoom()">Join room</button>
+
+<h3>Choose a YouTube video</h3>
+<input id="video" placeholder="Paste YouTube link">
+<button onclick="setVideo()">Play video</button>
+
+<div id="player"></div>
+
+<h3>Room chat 💬</h3>
+<div id="messages"></div>
+<input id="name" placeholder="Your name">
+<input id="chat" placeholder="Write a message">
+<button onclick="sendChat()">Send</button>
+</main>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+let socket, player, roomId="lobby", syncing=false;
+
+function connect(){
+ socket=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+ socket.onopen=()=>{document.getElementById("status").textContent="🟢 Connected";joinRoom()};
+ socket.onclose=()=>{document.getElementById("status").textContent="🔴 Disconnected. Refresh to reconnect."};
+ socket.onmessage=e=>{
+  const msg=JSON.parse(e.data);
+  if(msg.type==="state"){
+   if(msg.room.videoId && player) player.loadVideoById(msg.room.videoId);
+   (msg.room.chat||[]).forEach(addMessage);
+  }
+  if(msg.type==="chat")addMessage(msg.entry);
+  if(msg.type==="notice")addMessage({name:"WatchBuddy",text:msg.text});
+  if(msg.type==="error")alert(msg.text);
+  if(msg.type==="sync" && player && !syncing){
+   syncing=true;
+   if(Math.abs(player.getCurrentTime()-msg.time)>2)player.seekTo(msg.time,true);
+   if(msg.playing)player.playVideo();else player.pauseVideo();
+   setTimeout(()=>syncing=false,700);
+  }
+ };
+}
+function joinRoom(){
+ roomId=document.getElementById("room").value.trim()||"lobby";
+ if(socket&&socket.readyState===1)socket.send(JSON.stringify({type:"join",roomId}));
+}
+function setVideo(){
+ const video=document.getElementById("video").value;
+ if(socket&&socket.readyState===1)socket.send(JSON.stringify({type:"video",roomId,video}));
+}
+function sendChat(){
+ const box=document.getElementById("chat");
+ if(!box.value.trim())return;
+ if(socket&&socket.readyState===1)socket.send(JSON.stringify({
+  type:"chat",roomId,
+  name:document.getElementById("name").value||"Guest",
+  text:box.value
+ }));
+ box.value="";
+}
+function addMessage(m){
+ const div=document.createElement("div");
+ div.textContent=(m.name||"Guest")+": "+m.text;
+ document.getElementById("messages").appendChild(div);
+ document.getElementById("messages").scrollTop=999999;
+}
+function onYouTubeIframeAPIReady(){
+ player=new YT.Player("player",{
+  videoId:"",
+  events:{
+   onStateChange:e=>{
+    if(syncing||!socket||socket.readyState!==1)return;
+    if(e.data===1||e.data===2){
+     socket.send(JSON.stringify({
+      type:"sync",roomId,
+      time:player.getCurrentTime(),
+      playing:e.data===1
+     }));
+    }
+   }
+  }
+ });
+}
+connect();
+</script>
+</body>
+</html>
